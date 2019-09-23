@@ -158,6 +158,7 @@ where T: DeserializeOwned,
 
     fn poll(&mut self) -> Poll<(), Error> {
         use self::State::*;
+        use serde_json::error::Category;
 
         loop {
             let res = match self.state {
@@ -176,9 +177,22 @@ where T: DeserializeOwned,
                     
                     if self.is_json == true {
                         ::serde_json::from_slice(&res[..])
-                            .map_err(|_| {
-                                // TODO: Handle error better
-                                Some(Error::internal_error())
+                            .map_err(|serde_err| {
+                                match serde_err.classify() {
+                                    Category::Syntax => {
+                                        let mut tower_error = crate::error::Error::new(
+                                            "https://errors.interledger.org/invalid-json",
+                                            "Invalid JSON",
+                                            StatusCode::from_u16(400).unwrap()
+                                        );
+                                        tower_error.set_detail(&serde_err.to_string());
+                                        Some(Error::invalid(tower_error))
+                                    },
+                                    Category::Data => {
+                                        Some(Error::internal_error())
+                                    },
+                                    _ => Some(Error::internal_error())
+                                }
                         })
                     } else {
                         ::serde_urlencoded::from_bytes(&res[..])
